@@ -26,6 +26,7 @@
 char ssid[] = WIFI_SSID;
 char password[] = WIFI_PASSWORD;
 int offsetFromUTC = TIME_OFFSET;
+volatile bool mode12Hour = false;                   // bool used to toggle 12/24 hour mode
 
 // one hour offset (in seconds) for adjusting time
 #define ONE_HOUR 3600UL
@@ -48,9 +49,9 @@ DateTime now;       // Current date and time object
 // Initialize global variables. Uncomment entry for just one time server. Other NTP servers
 // can be added.
 // const char timeServer[] = "ntp-1.vt.edu";        // A Virginia Tech NTP server
-const char timeServer[] = "ntp-2.vt.edu";        // A Virginia Tech NTP server
+// const char timeServer[] = "ntp-2.vt.edu";        // A Virginia Tech NTP server
 // const char timeServer[] = "ntp-3.vt.edu";        // A Virginia Tech NTP server
-// const char timeServer[] = "ntp-4.vt.edu";        // A Virginia Tech NTP server
+const char timeServer[] = "ntp-4.vt.edu";        // A Virginia Tech NTP server
 // const char timeServer[] = "time.nist.gov";       // Public time.nist.gov NTP server
 // const char timeServer[] = "time.google.com";     // Public time.google.com NTP server
 
@@ -82,15 +83,19 @@ void setup() {
   uint32_t start = millis();
   while (!Serial && (millis() - start) < 2000);
 
+
   displaySplashScreen();
   statusMessage("Initializing", TFT_BLACK);
   delay(1000);
 
+
   if(!rtc.begin()) {
     setupFailed = true;
-    statusMessage("RTC Initialization Failed", TFT_RED);
+    statusMessage("RTC Initialization Failed", TFT_BLACK);
+    delay(1000);
   } else {
     statusMessage("RTC Initialized", TFT_BLACK);
+    delay(1000);
   }
 
   if(!setupFailed) {
@@ -98,19 +103,36 @@ void setup() {
       setupFailed = true;
     }
   }
+
+  if(!setupFailed) {
+    statusMessage("Displaying Time", TFT_BLACK);
+    printDateTime();
+
+    DateTime rtcAlarm = DateTime(now.year(), now.month(), now.day(), now.hour(), now.minute(), 0);
+    rtc.setAlarm(0, rtcAlarm);
+    rtc.enableAlarm(0, rtc.MATCH_SS);
+    rtc.attachInterrupt(processRtcAlarm);
+
+    pinMode(WIO_KEY_A, INPUT_PULLUP);
+    attachInterrupt(digitalPinToInterrupt(WIO_KEY_A), processButtonA, FALLING);
+  }
+
 }
 
 void loop() {
   // put your main code here, to run repeatedly:
-
+  
 }
 
-// shows display screen
+// shows display screen + button A label for 12/24 hr mode
 void displaySplashScreen() {
   tft.fillScreen(TFT_BLUE);
   tft.setTextDatum(MC_DATUM);
-  tft.setFreeFont(FSSB12);
   tft.setTextColor(TFT_WHITE);
+
+  tft.setFreeFont(FSSB9);
+  tft.drawString("12/24", TFT_HEIGHT/2 + 10, TFT_WIDTH/2 - 105);
+  tft.setFreeFont(FSSB12);
   tft.drawString("ECE 5984", TFT_HEIGHT/2, TFT_WIDTH/2 - 75);
   tft.drawString("Project 2", TFT_HEIGHT/2, TFT_WIDTH/2 - 45);
   tft.drawString("Ben Seidel", TFT_HEIGHT/2, TFT_WIDTH/2 - 15);
@@ -132,6 +154,7 @@ bool setTime() {
 
   if(!connectWiFi()) {
     statusMessage("Connection to Wi-Fi Failed", TFT_BLACK);
+    delay(1000);
     return false;
   }
 
@@ -139,6 +162,7 @@ bool setTime() {
 
   if(devicetime == 0) {
       statusMessage("NTP Request Failed", TFT_BLACK);
+      delay(1000);
       return false;
   }
 
@@ -146,10 +170,11 @@ bool setTime() {
 
   now = rtc.now();
   statusMessage("RTC Updated", TFT_BLACK);
+  delay(1000);
 
   WiFi.disconnect();
   statusMessage("Disconnected from Wi-Fi", TFT_BLACK);
-
+  delay(1000);
   return true;
 }
 
@@ -170,7 +195,7 @@ bool connectWiFi() {
     statusMessage("Connecting to Wi-Fi", TFT_BLACK);
     delay(1000);
 
-    uint16_t start = millis();
+    uint32_t start = millis();
     while((WiFi.status() != WL_CONNECTED) && ((millis() - start) < 4000));
   } while((WiFi.status() != WL_CONNECTED) && (attempts < WIFI_ATTEMPTS));
 
@@ -179,10 +204,12 @@ bool connectWiFi() {
   // Serial.println(attempts);
   if(WiFi.status() != WL_CONNECTED) {
     statusMessage("Connection to Wi-Fi Failed", TFT_BLACK);
+    delay(1000);
     return false;
   }
   
   statusMessage("Connected to Wi-Fi", TFT_BLACK);
+  delay(1000);
   return true;
 }
 
@@ -194,45 +221,54 @@ unsigned long getNTPtime() {
 
     udp.begin(WiFi.localIP(), localPort);
 
-    sendNTPpacket(timeServer);
-    statusMessage("Getting Time", TFT_BLACK);
-    delay(1000);
-  
-    uint32_t start = millis();
-    do{
-      udpBytes = udp.parsePacket();
-    } while((udpBytes == 0) && (start - millis() < 10000));
+    for(int i = 0; i < NTP_SERVER_ATTEMPTS; i++) {
+      sendNTPpacket(timeServer);
+      statusMessage("Getting Time", TFT_BLACK);
+      delay(1000);
+    
+      uint32_t start = millis();
+      do{
+        udpBytes = udp.parsePacket();
+      } while((udpBytes == 0) && (millis() - start < 10000));
 
-    if(udpBytes > 0) {
-      statusMessage("Time Retrieved", TFT_BLACK);
+      if(udpBytes > 0) {
+        statusMessage("Time Retrieved", TFT_BLACK);
+        delay(1000);
 
-      // Read the data from the packet into the packet buffer up to maximum size.
-            udp.read(packetBuffer, NTP_PACKET_SIZE);
+        // Read the data from the packet into the packet buffer up to maximum size.
+              udp.read(packetBuffer, NTP_PACKET_SIZE);
 
-            // The timestamp starts at byte 40 of the received packet and is four bytes (two words)
-            // long. First, extract the two words.
-            unsigned long highWord = word(packetBuffer[40], packetBuffer[41]);
-            unsigned long lowWord = word(packetBuffer[42], packetBuffer[43]);
+              // The timestamp starts at byte 40 of the received packet and is four bytes (two words)
+              // long. First, extract the two words.
+              unsigned long highWord = word(packetBuffer[40], packetBuffer[41]);
+              unsigned long lowWord = word(packetBuffer[42], packetBuffer[43]);
 
-            // Then combine the four bytes (two words) into a long integer. The result is NTP time,
-            // which is the number of seconds since January 1, 1900.
-            unsigned long secsSince1900 = highWord << 16 | lowWord;
+              // Then combine the four bytes (two words) into a long integer. The result is NTP time,
+              // which is the number of seconds since January 1, 1900.
+              unsigned long secsSince1900 = highWord << 16 | lowWord;
 
-            // Unix time starts 70 years later on January 1, 1970. 70 years is 2208988800 seconds.
-            const unsigned long seventyYears = 2208988800UL;
+              // Unix time starts 70 years later on January 1, 1970. 70 years is 2208988800 seconds.
+              const unsigned long seventyYears = 2208988800UL;
 
-            // Subtract seventy years to get Unix time, which is for UTC.
-            unsigned long epoch = secsSince1900 - seventyYears;
+              // Subtract seventy years to get Unix time, which is for UTC.
+              unsigned long epoch = secsSince1900 - seventyYears;
 
-            // Adjust time for timezone offset in secs +/- from UTC. Offset was set from
-            // configuration input.
-            long tzOffset = offsetFromUTC * ONE_HOUR;
-            unsigned long adjustedTime;
-            return adjustedTime = epoch + tzOffset;
-    } else {
-      statusMessage("NTP Request Failed", TFT_BLACK);
-      udp.stop(); // clear udp connection
-      return 0;
+              // Adjust time for timezone offset in secs +/- from UTC. Offset was set from
+              // configuration input.
+              long tzOffset = offsetFromUTC * ONE_HOUR;
+              unsigned long adjustedTime;
+              return adjustedTime = epoch + tzOffset;
+      } else {
+        udp.stop(); // clear udp connection
+        delay(1000);
+
+        if(i == NTP_SERVER_ATTEMPTS - 1) {
+          statusMessage("NTP Request Failed", TFT_BLACK);
+          delay(1000);
+          return 0;
+        }
+        udp.begin(WiFi.localIP(), localPort);
+      }
     }
     udp.stop();
   } else {
@@ -266,5 +302,66 @@ void sendNTPpacket(const char* address) {
     udp.beginPacket(address, ntpPort); //NTP requests are to port 123
     udp.write(packetBuffer, NTP_PACKET_SIZE);
     udp.endPacket();
+}
+
+// updates the datetime. Only updates the time, if the date hasn't changed (9)
+// TODO add portion to make rectangle that only takes out time, not whole thing
+void printDateTime() {
+  DateTime updatedTime = rtc.now();
+
+  bool dateChanged = (updatedTime.day() != now.day()) 
+                    || (updatedTime.month() != now.month())
+                    || (updatedTime.year() != now.year());
+
+  now = updatedTime;
+
+  // if(dateChanged) {
+    statusMessage("Displaying Time", TFT_BLACK);
+
+    tft.fillRect(TFT_HEIGHT/2 - 100, TFT_WIDTH/2 - 100, 240, 120, TFT_BLUE);
+
+    tft.setTextColor(TFT_WHITE);
+    tft.setTextDatum(MC_DATUM);
+    tft.setFreeFont(FSSB12);
+
+    tft.drawString(daysOfTheWeek[now.dayOfTheWeek()], TFT_HEIGHT/2, TFT_WIDTH/2 - 70);
+
+    tft.drawString(
+        String(monthsOfTheYear[now.month() - 1]) +
+        " " + String(now.day()) + ", " 
+        + String(now.year()),TFT_HEIGHT/2, 
+        TFT_WIDTH/2 - 35);  
+
+  // }
+  int displayHour = now.hour();
+
+  if (mode12Hour) {
+      if (displayHour == 0) {
+          displayHour = 12;
+      }
+      else if (displayHour > 12) {
+          displayHour -= 12;
+      }
+  }
+
+  String timeString = String(displayHour) + ":" + (now.minute() < 10 ? "0" : "") + String(now.minute());
+  tft.drawString(timeString, TFT_HEIGHT/2, TFT_WIDTH/2);
+
+  if (mode12Hour) {
+      String ampm = (now.hour() < 12) ? "AM" : "PM";
+      tft.drawString(ampm, TFT_HEIGHT/2 + 58, TFT_WIDTH/2);
+  }
+}
+
+// RTC interrupt for updating date
+void processRtcAlarm(uint32_t flag) {
+  printDateTime();
+}
+
+// Button A interrupt (switches 12 hr time format to 24 hr or vice versa)
+void processButtonA() {
+  mode12Hour = !mode12Hour;
+  printDateTime();
+  while(digitalRead(WIO_KEY_A) == LOW);
 }
 
