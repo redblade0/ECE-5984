@@ -5,13 +5,19 @@
   benseidel@vt.edu
   
   Required libraries/files:
-  TODO
+  TFT library
+  Free Fonts library
+  Seed rpcWiFi library
+  RTC_SAMD51 library
+  DateTime
 
   Compiling/Uploading:
-  TODO
+  When compiling this code, make sure you have your own f26p2config.h
+  with the WIFI_SSID and WIFI_PASSWORD set.
 
   Acknowledgments:
-  TODO
+  This code uses the examples from SEED and the interrupt/NTP example
+  provided to us for this project.
 */
 
 
@@ -27,6 +33,7 @@ char ssid[] = WIFI_SSID;
 char password[] = WIFI_PASSWORD;
 int offsetFromUTC = TIME_OFFSET;
 volatile bool mode12Hour = false;                   // bool used to toggle 12/24 hour mode
+bool firstDisplay = true;                           // Used to display time, first time running
 
 // one hour offset (in seconds) for adjusting time
 #define ONE_HOUR 3600UL
@@ -37,38 +44,30 @@ volatile bool mode12Hour = false;                   // bool used to toggle 12/24
 // number of NTP server attempts before message appears
 #define NTP_SERVER_ATTEMPTS 2
 
-// top of display
-#define VALUE_TOP 90
-
 TFT_eSPI tft;       // Built-in TFT display
 RTC_SAMD51 rtc;     // Real-time clock
-WiFiClient client;  // Wi-Fi client
 WiFiUDP udp;        // UDP endpoint
 DateTime now;       // Current date and time object
 
 // Initialize global variables. Uncomment entry for just one time server. Other NTP servers
 // can be added.
 // const char timeServer[] = "ntp-1.vt.edu";        // A Virginia Tech NTP server
-// const char timeServer[] = "ntp-2.vt.edu";        // A Virginia Tech NTP server
+const char timeServer[] = "ntp-2.vt.edu";           // A Virginia Tech NTP server
 // const char timeServer[] = "ntp-3.vt.edu";        // A Virginia Tech NTP server
-const char timeServer[] = "ntp-4.vt.edu";        // A Virginia Tech NTP server
+// const char timeServer[] = "ntp-4.vt.edu";        // A Virginia Tech NTP server
 // const char timeServer[] = "time.nist.gov";       // Public time.nist.gov NTP server
 // const char timeServer[] = "time.google.com";     // Public time.google.com NTP server
 
 const unsigned int localPort = 59840;   // Local port to listen for UDP packets (use ephemeral port 49152–65535)
 const unsigned int ntpPort = 123;       // Well-known port for NTP service using UDP
 
-const int NTP_PACKET_SIZE = 48;     // NTP timestamp is in the first 48 bytes of the message
-byte packetBuffer[NTP_PACKET_SIZE]; // Buffer to hold incoming and outgoing NTP packets
+const int NTP_PACKET_SIZE = 48;         // NTP timestamp is in the first 48 bytes of the message
+byte packetBuffer[NTP_PACKET_SIZE];     // Buffer to hold incoming and outgoing NTP packets
 
-unsigned long devicetime;           // Device time variable as seconds offset from 1/1/1970
+unsigned long devicetime;               // Device time variable as seconds offset from 1/1/1970
 
 const char daysOfTheWeek[7][12] = { "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday" };
 const char monthsOfTheYear[12][12] = { "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"};
-
-unsigned long previousMillis = 0;   // Previous time used to take action in loop() about every minute
-// (In the full solution, previousMillis is not needed since display updates are interrupt-driven
-// rather than based on checking time in the loop() routine.)
 
 void setup() {
   tft.begin();
@@ -106,6 +105,7 @@ void setup() {
 
   if(!setupFailed) {
     statusMessage("Displaying Time", TFT_BLACK);
+    delay(1000);
     printDateTime();
 
     DateTime rtcAlarm = DateTime(now.year(), now.month(), now.day(), now.hour(), now.minute(), 0);
@@ -139,7 +139,7 @@ void displaySplashScreen() {
 }
 
 // helper function to write status messages
-void statusMessage(char *message, uint16_t color) {
+void statusMessage(const char *message, uint16_t color) {
   uint16_t lightBlue = tft.color565(135, 206, 250);
   tft.fillRect(TFT_HEIGHT/2 - 120, TFT_WIDTH/2 + 40, 240, 40, lightBlue);
   tft.setTextDatum(MC_DATUM);
@@ -304,22 +304,26 @@ void sendNTPpacket(const char* address) {
     udp.endPacket();
 }
 
-// updates the datetime. Only updates the time, if the date hasn't changed (9)
-// TODO add portion to make rectangle that only takes out time, not whole thing
+/*
+  I used ChatGPT to generate the code for the dates and the time. I was confused on how to access
+  the dates from the Serial.println example and how to transfer it. I understand now
+  that you can put the array into drawString function. I coded the rest of the function
+  for changing the date itself, as well as the am/pm.
+*/
 void printDateTime() {
+
   DateTime updatedTime = rtc.now();
 
-  bool dateChanged = (updatedTime.day() != now.day()) 
-                    || (updatedTime.month() != now.month())
-                    || (updatedTime.year() != now.year());
+  bool dateChanged = firstDisplay ||
+                     (updatedTime.day() != now.day()) ||
+                     (updatedTime.month() != now.month()) ||
+                     (updatedTime.year() != now.year());
 
   now = updatedTime;
 
-  // if(dateChanged) {
-    statusMessage("Displaying Time", TFT_BLACK);
+  if (dateChanged) {
 
-    tft.fillRect(TFT_HEIGHT/2 - 100, TFT_WIDTH/2 - 100, 240, 120, TFT_BLUE);
-
+    tft.fillRect(TFT_HEIGHT/2 - 100, TFT_WIDTH/2 - 90, 240, 120, TFT_BLUE);
     tft.setTextColor(TFT_WHITE);
     tft.setTextDatum(MC_DATUM);
     tft.setFreeFont(FSSB12);
@@ -328,32 +332,47 @@ void printDateTime() {
 
     tft.drawString(
         String(monthsOfTheYear[now.month() - 1]) +
-        " " + String(now.day()) + ", " 
-        + String(now.year()),TFT_HEIGHT/2, 
-        TFT_WIDTH/2 - 35);  
+        " " + String(now.day()) + ", " +
+        String(now.year()),
+        TFT_HEIGHT/2,
+        TFT_WIDTH/2 - 35);
+  }
 
-  // }
+  tft.fillRect(TFT_HEIGHT/2 - 100, TFT_WIDTH/2 - 15, 240, 55, TFT_BLUE);
+
   int displayHour = now.hour();
 
   if (mode12Hour) {
-      if (displayHour == 0) {
-          displayHour = 12;
-      }
-      else if (displayHour > 12) {
-          displayHour -= 12;
-      }
+    if (displayHour == 0) {
+      displayHour = 12;
+    }
+    else if (displayHour > 12) {
+      displayHour -= 12;
+    }
   }
 
-  String timeString = String(displayHour) + ":" + (now.minute() < 10 ? "0" : "") + String(now.minute());
-  tft.drawString(timeString, TFT_HEIGHT/2, TFT_WIDTH/2);
+  String timeString =
+      String(displayHour) +
+      ":" +
+      (now.minute() < 10 ? "0" : "") +
+    String(now.minute());
+
+  tft.setTextColor(TFT_WHITE);
+  tft.setTextDatum(MC_DATUM);
+  tft.setFreeFont(FSSB12);
+
+  tft.drawString(timeString,TFT_HEIGHT/2, TFT_WIDTH/2);
 
   if (mode12Hour) {
-      String ampm = (now.hour() < 12) ? "AM" : "PM";
-      tft.drawString(ampm, TFT_HEIGHT/2 + 58, TFT_WIDTH/2);
+    String ampm = (now.hour() < 12) ? "AM" : "PM";
+
+    tft.drawString(ampm, TFT_HEIGHT/2 + 58,TFT_WIDTH/2);
   }
+
+  firstDisplay = false; // flag for date first time the code is run
 }
 
-// RTC interrupt for updating date
+// RTC interrupt for updating time and date
 void processRtcAlarm(uint32_t flag) {
   printDateTime();
 }
