@@ -338,7 +338,7 @@ void printDateTime() {
         TFT_WIDTH/2 - 35);
   }
 
-  tft.fillRect(TFT_HEIGHT/2 - 100, TFT_WIDTH/2 - 15, 240, 55, TFT_BLUE);
+  tft.fillRect(TFT_HEIGHT/2 - 100, TFT_WIDTH/2 - 25, 240, 55, TFT_BLUE);
 
   int displayHour = now.hour();
 
