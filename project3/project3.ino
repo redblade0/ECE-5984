@@ -28,7 +28,9 @@
 #include "certificate.h"
 
 bool is_celsius = true;                           
-
+String ssid = WIFI_SSID;
+String password = WIFI_PASSWORD;
+String zip_code = DEFAULT_ZIP_CODE;
 
 TFT_eSPI tft;       // Built-in TFT display
 
@@ -44,14 +46,14 @@ void setup() {
 
   displaySplashScreen();
   statusMessage("Initializing", TFT_BLACK);
-  delay(2000);
+  delay(3000);
 
-
+  readParameters();
 }
 
 void loop() {
   // put your main code here, to run repeatedly:
-
+  
 }
 
 // shows display screen + button A label for 12/24 hr mode
@@ -61,8 +63,8 @@ void displaySplashScreen() {
   tft.setTextColor(TFT_WHITE);
 
   tft.setFreeFont(FSSB9);
-  tft.drawString("C", TFT_HEIGHT/2 + 10, TFT_WIDTH/2 - 105);
-  tft.drawString("Refresh", TFT_HEIGHT/2 - 70, TFT_WIDTH/2 - 105);
+  // tft.drawString("C", TFT_HEIGHT/2 + 10, TFT_WIDTH/2 - 105);
+  // tft.drawString("Refresh", TFT_HEIGHT/2 - 70, TFT_WIDTH/2 - 105);
   tft.setFreeFont(FSSB12);
   tft.drawString("ECE 5984 Fall 2026", TFT_HEIGHT/2, TFT_WIDTH/2 - 75);
   tft.drawString("Project 3", TFT_HEIGHT/2, TFT_WIDTH/2 - 45);
@@ -78,4 +80,31 @@ void statusMessage(const char *message, uint16_t color) {
   tft.setFreeFont(FSSB9);
   tft.setTextColor(color);
   tft.drawString(message, TFT_HEIGHT/2, TFT_WIDTH/2 + 60);
+}
+
+void readParameters() {
+  if(Serial) {
+    statusMessage("reading Parameters", TFT_BLACK);
+    Serial.println();
+
+    Serial.print("Wi-Fi SSID?: ");
+    while(Serial.available() == 0) {}
+    ssid = Serial.readString();
+    ssid.trim();
+    Serial.println(ssid);
+
+    Serial.print("Wi-Fi Password?: ");
+    while(Serial.available() == 0) {}
+    password = Serial.readString();
+    password.trim();
+    Serial.println(password);
+
+    Serial.print("Zip code for weather?: ");
+    while(Serial.available() == 0) {}
+    zip_code = Serial.readString();
+    zip_code.trim();
+    Serial.println(zip_code);
+  } else {
+    statusMessage("Using Default Parameters", TFT_BLACK);
+  }
 }
