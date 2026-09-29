@@ -27,6 +27,9 @@
 #include "f26p3config.h"                            // Personal WiFi info
 #include "certificate.h"
 
+#define WIFI_TIMEOUT_SEC 30
+#define WIFI_ATTEMPTS 2
+
 bool is_celsius = true;                           
 String ssid = WIFI_SSID;
 String password = WIFI_PASSWORD;
@@ -39,6 +42,8 @@ void setup() {
   tft.setRotation(3);
   tft.backlight();
 
+  bool setupFailed = false;
+
   // Start serial initilization and wait 2 seconds for it to start
   Serial.begin(115200);
   uint32_t start = millis();
@@ -49,6 +54,14 @@ void setup() {
   delay(3000);
 
   readParameters();
+
+  statusMessage("Connecting to WiFi", TFT_BLACK);
+  if(!connectWiFi()) {
+    statusMessage("WiFi Failed", TFT_BLACK);
+    while(1) delay(10000); // loop forever, not possible to connect to server without wifi
+  }
+
+
 }
 
 void loop() {
@@ -84,7 +97,7 @@ void statusMessage(const char *message, uint16_t color) {
 
 void readParameters() {
   if(Serial) {
-    statusMessage("reading Parameters", TFT_BLACK);
+    statusMessage("Reading Parameters", TFT_BLACK);
     Serial.println();
 
     Serial.print("Wi-Fi SSID?: ");
@@ -107,4 +120,41 @@ void readParameters() {
   } else {
     statusMessage("Using Default Parameters", TFT_BLACK);
   }
+}
+
+
+// Connects to wifi using SSID and password. Repeats WIFI_ATTEMPTS times.
+// Taken from my project 2 code and slightly modified.
+bool connectWiFi() {
+
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect();
+
+  int attempts = 0;
+  do {
+    if(strlen(password.c_str()) > 0) {
+      WiFi.begin(ssid.c_str(), password.c_str());
+    } else {
+      WiFi.begin(ssid.c_str());
+    }
+    attempts++;
+    statusMessage("Connecting to Wi-Fi", TFT_BLACK);
+    delay(1000);
+
+    uint32_t start = millis();
+    while((WiFi.status() != WL_CONNECTED) && ((millis() - start) < 4000));
+  } while((WiFi.status() != WL_CONNECTED) && (attempts < WIFI_ATTEMPTS));
+
+  // DEBUG for how many times WiFi is tried
+  // Serial.print("attempts: ");
+  // Serial.println(attempts);
+  if(WiFi.status() != WL_CONNECTED) {
+    statusMessage("Connection to Wi-Fi Failed", TFT_BLACK);
+    delay(1000);
+    return false;
+  }
+  
+  statusMessage("Connected to Wi-Fi", TFT_BLACK);
+  delay(1000);
+  return true;
 }
