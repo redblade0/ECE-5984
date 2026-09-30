@@ -30,12 +30,23 @@
 #define WIFI_TIMEOUT_SEC 30
 #define WIFI_ATTEMPTS 2
 
-bool is_celsius = true;                           
+TFT_eSPI tft;             // Built-in TFT display
+WiFiClientSecure client;  // HTTPS client
+JsonDocument doc;         // JSON document
+
+
+bool is_celsius = true;
+// These are strings becuase Serial.readString takes a string
+// and it was easier to convert from string to a c string in wifi
 String ssid = WIFI_SSID;
 String password = WIFI_PASSWORD;
 String zip_code = DEFAULT_ZIP_CODE;
+const char* api_key = API_KEY;
+const char* weatherServer = "api.weatherapi.com"; // weather service
 
-TFT_eSPI tft;       // Built-in TFT display
+const char *test_root_ca = R"(-----BEGIN CERTIFICATE-----
+-----END CERTIFICATE-----
+)";
 
 void setup() {
   tft.begin();
@@ -157,4 +168,62 @@ bool connectWiFi() {
   statusMessage("Connected to Wi-Fi", TFT_BLACK);
   delay(1000);
   return true;
+}
+
+
+bool getWeather() {
+
+  bool getSuccess = true;
+
+  client.setCACert(test_root_ca);
+
+  if(&client) {
+    HTTPClient https;
+
+    https.addHeader("Connection", "close");
+    https.addHeader("Accept", "text/html, application/json, application/geo-json, application/ld-json");
+
+
+    bool httpsError = true;
+    while (httpsError) {
+
+      // builds the url for a weather api request for the current weather of a specific zip code
+      char url[200];
+      sprintf(url, "%s%s%s%s%s%s%s",
+        "https://",
+        weatherServer,
+        "/v1/current.json?key=",
+        apiKey,
+        "&q=",
+        zipCode,
+        "%20HTTP/1.1"
+      );
+
+      statusMessage("Getting Weather Data", TFT_BLACK);
+
+      if(https.begin(client, weatherServer, 443, url, true)){
+        
+        int httpCode = https.GET();
+        if(httpCode > 0) {
+          if(httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMENTELY) {
+
+            String payload = https.getString();
+            Deserialization error = deserializeJson(doc, payload);
+            
+            if(error) {
+              getSuccess = false;
+            }
+            httpsError = false;
+          }
+        } else {
+          delay(10000) // delay before trying again
+        }
+
+      } 
+
+    }
+
+  }
+
+
 }
