@@ -8,15 +8,25 @@
   TFT library
   Free Fonts library
   Seed rpcWiFi library
+  JSON library
+  HTTPS client library
+  WiFi HTTP client library
+  certificate.h with server certificate (if running post 2027 you will likely need a new one)
+  f26p3config.h (This will contain your api_key and default wifi + zip information)
 
   Compiling/Uploading:
-  When compiling this code, make sure you have your own f26p2config.h
-  with the WIFI_SSID and WIFI_PASSWORD set.
+  When compiling this code, make sure you have your own f26p3config.h
+  with the WIFI_SSID, WIFI_PASSWORD, and default ZIP code set. This is
+  to be used if the serial monitor does not work. You will also need a
+  certificate.h that will be used to access Weather API with HTTPS
 
   Acknowledgments:
-  
+  This code uses and modifies examples from SEED and the examples provided
+  to us in class.
 */
+
 #define DEBUG
+#define REFRESH_TIME_MIN 1 // change to 15 later
 
 #include "TFT_eSPI.h"                               // TFT LCD header file
 #include "Free_Fonts.h"                             // Free fonts header file (needs to be in directory with this file)
@@ -28,8 +38,8 @@
 #include "f26p3config.h"                            // Personal WiFi info
 #include "certificate.h"                            // Contains certificate
 
-#define WIFI_TIMEOUT_SEC 30
 #define WIFI_ATTEMPTS 2
+#define UPDATE_PERIOD_MIN 15                        // How often the weather API is called
 
 TFT_eSPI tft;             // Built-in TFT display
 WiFiClientSecure client;  // HTTPS client
@@ -45,112 +55,102 @@ String zip_code = DEFAULT_ZIP_CODE;
 const char* api_key = API_KEY;
 const char* weatherServer = "api.weatherapi.com"; // weather service
 
+unsigned long updateTime;                         // Last time refreshed in ms
+int updatePeriod = UPDATE_PERIOD_MIN * 60 * 1000; // Length of update in ms
+
+// interrupt flags
+volatile bool buttonARequested = false;
+volatile bool buttonBRequested = false;
+
 void setup() {
-  // Initialize TFT
   tft.begin();
   tft.setRotation(3);
   tft.backlight();
 
-  // Initialize Serial
-  Serial.begin(115200);
+  bool setupFailed = false;
 
-  // Give Serial a moment to start
+  // Start serial initilization and wait 2 seconds for it to start
+  Serial.begin(115200);
   uint32_t start = millis();
   while (!Serial && (millis() - start) < 2000);
 
-  // Show splash screen
   displaySplashScreen();
-  delay(3000);
+  statusMessage("Initializing", TFT_BLACK);
+  delay(2000);
 
-  Serial.println("Starting test JSON...");
+  readParameters();
 
-  // Test JSON instead of calling the weather API
-  const char* testJson = R"json(
-  {
-    "location": {
-      "name": "Blacksburg",
-      "region": "Virginia",
-      "country": "USA",
-      "lat": 37.2563018798828,
-      "lon": -80.434700012207,
-      "tz_id": "America/New_York",
-      "localtime_epoch": 1790805422,
-      "localtime": "2026-09-30 17:57"
-    },
-    "current": {
-      "last_updated": "2026-09-30 17:45",
-      "temp_c": 23.0,
-      "temp_f": 73.4,
-      "condition": {
-        "text": "Overcast"
-      },
-      "humidity": 32,
-      "will_it_rain": 0,
-      "chance_of_rain": 9,
-      "will_it_snow": 0,
-      "chance_of_snow": 0
-    }
+  statusMessage("Connecting to WiFi", TFT_BLACK);
+  if(!connectWiFi()) {
+    statusMessage("WiFi Failed", TFT_BLACK);
+    while(1) delay(10000); // loop forever, not possible to connect to server without wifi
   }
-  )json";
 
-  DeserializationError error = deserializeJson(doc, testJson);
-
-  if (error) {
-    Serial.print("Test JSON error: ");
-    Serial.println(error.f_str());
-
-    statusMessage("JSON Failed", TFT_RED);
-  } else {
-    Serial.println("JSON parsed successfully!");
-    displayWeather();
+  statusMessage("Getting Weather Data", TFT_BLACK);
+  if(!getWeather()) {
+    statusMessage("Request Failed", TFT_BLACK);
+    while(1) delay(10000); // loop forever, request failed
   }
+
+  statusMessage("Displaying Weather Data", TFT_BLACK);
+  displayWeather();
+  updateTime = millis();
+
   pinMode(WIO_KEY_A, INPUT_PULLUP);
+  pinMode(WIO_KEY_B, INPUT_PULLUP);
+
   attachInterrupt(digitalPinToInterrupt(WIO_KEY_A), processButtonA, FALLING);
-  statusMessage("TEST", TFT_BLACK);
+  attachInterrupt(digitalPinToInterrupt(WIO_KEY_B), processButtonB, FALLING);
+
 }
-
-// void setup() {
-//   tft.begin();
-//   tft.setRotation(3);
-//   tft.backlight();
-
-//   pinMode(WIO_KEY_A, INPUT_PULLUP);
-
-//   bool setupFailed = false;
-
-//   // Start serial initilization and wait 2 seconds for it to start
-//   Serial.begin(115200);
-//   uint32_t start = millis();
-//   while (!Serial && (millis() - start) < 2000);
-
-//   displaySplashScreen();
-//   statusMessage("Initializing", TFT_BLACK);
-//   delay(3000);
-
-//   readParameters();
-
-//   statusMessage("Connecting to WiFi", TFT_BLACK);
-//   if(!connectWiFi()) {
-//     statusMessage("WiFi Failed", TFT_BLACK);
-//     while(1) delay(10000); // loop forever, not possible to connect to server without wifi
-//   }
-
-//   statusMessage("Getting Weather Data", TFT_BLACK);
-//   if(!getWeather()) {
-//     statusMessage("Request Failed", TFT_BLACK);
-//     while(1) delay(10000); // loop forever, request failed
-//   }
-
-//   statusMessage("Displaying Weather Data", TFT_BLACK);
-//   displayWeather();
-
-// }
 
 void loop() {
 
+  // toggle F and C
+  if (buttonARequested) {
+    noInterrupts();
+    buttonARequested = false;
+    interrupts();
+    is_celsius = !is_celsius;
+    updateTemperatureDisplay();
+    while (digitalRead(WIO_KEY_A) == LOW);
+  }
+
+  // Refresh weather data
+  if (buttonBRequested) {
+    noInterrupts();
+    buttonBRequested = false;
+    interrupts();
+    statusMessage("Getting Weather Data", TFT_BLACK);
+
+    if (getWeather()) {
+      statusMessage("Displaying Weather Data", TFT_BLACK);
+      displayWeather();
+      updateTime = millis(); // reset timer
+    } else {
+      statusMessage("Request Failed", TFT_BLACK);
+    }
+
+    while (digitalRead(WIO_KEY_B) == LOW);
+  }
+
+  // Automatic weather refresh
+  if (millis() - updateTime >= updatePeriod) {
+    statusMessage("Getting Weather Data", TFT_BLACK);
+
+    if (getWeather()) {
+      statusMessage("Displaying Weather Data", TFT_BLACK);
+      displayWeather();
+      updateTime = millis(); // reset timer
+    } else {
+      statusMessage("Request Failed", TFT_BLACK);
+      updateTime = millis(); // reset timer
+    }
+  }
 }
 
-// shows display screen + button A label for 12/24 hr mode
+
+// Displays start screen
 void displaySplashScreen() {
   tft.fillScreen(TFT_BLUE);
   tft.setTextDatum(MC_DATUM);
@@ -194,8 +194,7 @@ void displayWeather() {
   }
 
   tft.setFreeFont(FSSB9);
-  String humidityText =
-  String(humidity, 0) + "%";
+  String humidityText = String(humidity, 0) + "%";
 
   tft.drawString("Temperature", TFT_HEIGHT/4 , TFT_WIDTH / 2 - 55);
   tft.drawString(temperature, TFT_HEIGHT / 4, TFT_WIDTH / 2 - 35);
@@ -258,11 +257,15 @@ void statusMessage(const char *message, uint16_t color) {
 
 // button A interrupt (switches from F to C and vice versa)
 void processButtonA() {
-  is_celsius = !is_celsius;
-  updateTemperatureDisplay();
-  while(digitalRead(WIO_KEY_A) == LOW);
+  buttonARequested = true;
 }
 
+// button B interrupt (refreshes weather data)
+void processButtonB() {
+  buttonBRequested = true;
+}
+
+// Reads wifi SSID, password, and zip code for where weather is coming from
 void readParameters() {
   if(Serial) {
     statusMessage("Reading Parameters", TFT_BLACK);
@@ -327,37 +330,30 @@ bool connectWiFi() {
   return true;
 }
 
+// Sends a GET request to weather API
 bool getWeather() {
   #ifdef DEBUG
   Serial.println("STATUS: Getting current weather from API");
   #endif
 
-  // Flag to indicate success or error return.
   bool getSuccess = true;
 
-  // Set the certificate to use HTTPS.
   client.setCACert(test_root_ca);
 
   if (&client) {
     {
-      // Add a scoping block for HTTPClient https to make sure it is destroyed before
-      // WiFiClientSecure *client is destroyed
       HTTPClient https;
 
       #ifdef DEBUG
       Serial.print("STATUS: [HTTPS] begin...\n");
       #endif
 
-      // Set up header fields in request.
       https.addHeader("Connection", "close");
       https.addHeader("Accept", "text/html, application/json, application/geo-json, application/ld-json");
 
-      // Loop while connection is not successful.
       bool httpsError = true;
       while (httpsError) {
 
-        // Build URL for request.
-        // This request gets the current weather conditions.
         char url[200];
         sprintf(url, "%s%s%s%s%s%s",
             "https://",
@@ -373,27 +369,19 @@ bool getWeather() {
         Serial.println(url);
         #endif
 
-        // Connect to the server and send the request.
         if (https.begin(client, "api.weatherapi.com", 443, url, true)) {
 
           #ifdef DEBUG
           Serial.print("STATUS: [HTTPS] GET...\n");
           #endif
 
-          // Start connection and send the HTTP request.
           int httpCode = https.GET();
-
-          // httpCode will be negative on error.
           if (httpCode > 0) {
-
-            // HTTP header has been sent and Server response header has been handled.
             #ifdef DEBUG
             Serial.printf("STATUS: [HTTPS] GET... code: %d\n", httpCode);
             #endif
 
-            // File found at server.
-            if (httpCode == HTTP_CODE_OK ||
-                httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
+            if (httpCode == HTTP_CODE_OK || httpCode == HTTP_CODE_MOVED_PERMANENTLY) {
 
               String payload = https.getString();
 
@@ -402,11 +390,9 @@ bool getWeather() {
               Serial.println(payload);
               #endif
 
-              // Store JSON payload as doc.
               DeserializationError error = deserializeJson(doc, payload);
 
               if (error) {
-                // Deserialization failed.
                 #ifdef DEBUG
                 Serial.print("ERROR: JSON deserialization error: ");
                 Serial.println(error.f_str());
@@ -417,9 +403,7 @@ bool getWeather() {
 
               httpsError = false;
             }
-          }
-
-          else {
+          } else {
             #ifdef DEBUG
             Serial.printf(
               "ERROR: [HTTPS] GET... failed, error: %s\n",
@@ -430,24 +414,18 @@ bool getWeather() {
 
             delay(10000);  // slight delay before retry
           }
-        }
-
-        else {
+        } else {
           #ifdef DEBUG
           Serial.printf("ERROR: [HTTPS] Unable to connect\n");
           #endif
-
           getSuccess = false;
         }
 
         https.end();
       }
 
-      // End extra scoping block
     }
-  }
-
-  else {
+  } else {
     #ifdef DEBUG
     Serial.println("ERROR: Unable to create client");
     #endif
@@ -455,93 +433,5 @@ bool getWeather() {
     getSuccess = false;
   }
 
-  // Return with status indicated.
   return(getSuccess);
 }
-
-
-
-// bool getWeather() {
-
-//   Serial.println();
-//   Serial.println("----------------------------------------");
-//   Serial.println("ENTERING getWeather()");
-//   Serial.println("----------------------------------------");
-
-//   if (WiFi.status() != WL_CONNECTED) {
-//     Serial.println("WiFi NOT connected!");
-//     return false;
-//   }
-
-//   Serial.println("WiFi connected.");
-
-//   Serial.print("Connecting directly to ");
-//   Serial.print(weatherServer);
-//   Serial.println(":443...");
-
-//   client.setCACert(test_root_ca);
-
-//   if (!client.connect(weatherServer, 443)) {
-//     Serial.println("TLS CONNECTION FAILED!");
-
-//     Serial.print("Client connected: ");
-//     Serial.println(client.connected());
-
-//     return false;
-//   }
-
-//   Serial.println("TLS CONNECTION SUCCESSFUL!");
-
-//   // Build HTTP request manually
-//   String request =
-//     String("GET /v1/current.json?key=") +
-//     api_key +
-//     "&q=" +
-//     zip_code +
-//     " HTTP/1.1\r\n" +
-//     "Host: " +
-//     weatherServer +
-//     "\r\n" +
-//     "Connection: close\r\n" +
-//     "Accept: application/json\r\n" +
-//     "\r\n";
-
-//   Serial.println();
-//   Serial.println("========== RAW HTTP REQUEST ==========");
-//   Serial.println(request);
-//   Serial.println("======================================");
-
-//   Serial.println("Sending request...");
-
-//   client.print(request);
-
-//   Serial.println("Request sent.");
-
-//   // Wait for response
-//   uint32_t timeout = millis();
-
-//   while (!client.available()) {
-
-//     if (millis() - timeout > 10000) {
-//       Serial.println("TIMEOUT waiting for server response.");
-//       client.stop();
-//       return false;
-//     }
-
-//     delay(100);
-//   }
-
-//   Serial.println();
-//   Serial.println("========== SERVER RESPONSE ==========");
-
-//   while (client.available()) {
-//     String line = client.readStringUntil('\n');
-//     Serial.println(line);
-//   }
-
-//   Serial.println("=====================================");
-
-//   client.stop();
-
-//   return true;
-// }
