@@ -48,8 +48,16 @@ void setup() {
 
   dht.begin();
   
-  displaySplashScreen();
-  delay(2000);
+
+  // displaySplashScreen();
+  // delay(2000);
+  tft.fillScreen(TFT_BLUE);
+  tft.setTextDatum(MC_DATUM);
+  drawGridLayout();
+  displayTemperature();
+  displayHumidity();
+  statusMessage("TEST TEST TEST TEST", TFT_BLACK);
+
 
 }
 
@@ -61,11 +69,11 @@ void loop() {
 // helper function to write status messages
 void statusMessage(const char *message, uint16_t color) {
   uint16_t lightBlue = tft.color565(135, 206, 250);
-  tft.fillRect(TFT_HEIGHT/2 - 120, TFT_WIDTH/2 + 40, 240, 40, lightBlue);
+  tft.fillRect(40, 185, 240, 40, lightBlue);
   tft.setTextDatum(MC_DATUM);
   tft.setFreeFont(FSSB9);
   tft.setTextColor(color);
-  tft.drawString(message, TFT_HEIGHT/2, TFT_WIDTH/2 + 60);
+  tft.drawString(message, 160, 205);
 }
 
 // Displays start screen
@@ -74,7 +82,6 @@ void displaySplashScreen() {
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_WHITE);
 
-  tft.setFreeFont(FSSB9);
   tft.setFreeFont(FSSB12);
   tft.drawString("ECE 5984 Fall 2026", TFT_HEIGHT/2, TFT_WIDTH/2 - 75);
   tft.drawString("Project 4 CoAP Server", TFT_HEIGHT/2, TFT_WIDTH/2 - 45);
@@ -82,12 +89,51 @@ void displaySplashScreen() {
   tft.drawString("benseidel@vt.edu", TFT_HEIGHT/2, TFT_WIDTH/2 + 15);
 }
 
-void displayTemperature() {
-
-
+// Draws grid around temperature and humidity data
+void drawGridLayout() {
+  tft.drawFastHLine(0, 40, 320, TFT_WHITE);
+  tft.drawFastHLine(0, 170, 320, TFT_WHITE);
+  tft.drawFastVLine(160, 40, 130, TFT_WHITE);
 }
 
+// displays the temperature
+void displayTemperature() {
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE);
+  float temperatureFValue = dht.readTemperature(true);
+  char valueBuffer[16];
+  char stringBuffer[64];
+  
+  tft.setFreeFont(FSSB9);
+  tft.drawString("Temperature", 80, 65);
+  tft.drawString("Fahrenheit", 80, 150);
+  
+  if (!isnan(temperatureFValue)) {
+    dtostrf(temperatureFValue, 3, 1, valueBuffer);
+    sprintf(stringBuffer, "%s", valueBuffer);
+    tft.fillRect(5, 80, 150, 50, TFT_BLUE);
+    tft.setFreeFont(FSSB24);
+    tft.drawString(stringBuffer, 80, 105);
+  }
+}
+
+// displays humidity data
 void displayHumidity() {
-
-
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(TFT_WHITE);
+  float humidityValue = dht.readHumidity();
+  char valueBuffer[16];
+  char stringBuffer[64];
+  
+  tft.setFreeFont(FSSB9);
+  tft.drawString("Humidity", 240, 65);
+  tft.drawString("Percent", 240, 150);
+  
+  if (!isnan(humidityValue)) {
+    dtostrf(humidityValue, 3, 1, valueBuffer);
+    sprintf(stringBuffer, "%s", valueBuffer);
+    tft.fillRect(165, 80, 150, 50, TFT_BLUE);
+    tft.setFreeFont(FSSB24);
+    tft.drawString(stringBuffer, 240, 105);
+  }
 }
