@@ -27,11 +27,18 @@
 // Used for debug mode
 #define DEBUG
 #define DHTTYPE DHT11
-#define DHTPIN 0 // pin for digital port (right connector)
+#define DHTPIN 0               // pin for digital port (right connector)
+#define DISPLAY_INTERVAL 10   //interval in seconds
+
+uint16_t displayInterval = DISPLAY_INTERVAL * 1000;
+
+
+// Instantitate udp and coap objects (port is 5683)
+WiFiUDP udp;
+Coap::Node coapNode(udp, COAP_DEFAULT_PORT);
 
 DHT dht(DHTPIN, DHTTYPE);
-
-TFT_eSPI tft;             // Built-in TFT display
+TFT_eSPI tft;                 // Built-in TFT display
 
 
 char * mySSID = AP_SSID;
@@ -49,20 +56,48 @@ void setup() {
   dht.begin();
   
 
-  // displaySplashScreen();
-  // delay(2000);
-  tft.fillScreen(TFT_BLUE);
-  tft.setTextDatum(MC_DATUM);
-  drawGridLayout();
+  displaySplashScreen();
+  delay(2000);
+  statusMessage("Reading Sensors", TFT_BLACK);
+
+  // EVERYTHING MUST BE OVERWRITTEN AS A BOX
+
   displayTemperature();
   displayHumidity();
-  statusMessage("TEST TEST TEST TEST", TFT_BLACK);
+  delay(2000);
+  
+  // set device to be an access point
+  if(!WiFi.mode(WIFI_AP)) {
+    while(1) delay(10000);
+  }
+
+  // Configure access point
+  statusMessage("Establishing WiFI AP", TFT_BLACK);
+  delay(2000);
+  if(!WiFi.softAP(mySSID, myPW)){
+    statusMessage("WiFi Failed", TFT_BLACK);
+    while(1) delay(10000);
+  }
+  char message[64];
+  snprintf(message, sizeof(message), "WiFi Active, %s", mySSID);
+  statusMessage(message, TFT_BLACK);
+  delay(2000);
+  // tft.fillScreen(TFT_BLUE);
+  // tft.setTextDatum(MC_DATUM);
+  // displayServerName();
+  // drawGridLayout();
+  // displayTemperature();
+  // displayHumidity();
+  // statusMessage("TEST TEST TEST TEST", TFT_BLACK);
 
 
 }
 
 void loop() {
   // put your main code here, to run repeatedly:
+  displayTemperature();
+  displayHumidity();
+  delay(displayInterval);
 
 }
 
@@ -74,6 +109,15 @@ void statusMessage(const char *message, uint16_t color) {
   tft.setFreeFont(FSSB9);
   tft.setTextColor(color);
   tft.drawString(message, 160, 205);
+}
+
+// displays server name
+void displayServerName() {
+  tft.setTextDatum(TL_DATUM);
+  tft.setTextColor(TFT_WHITE);
+  tft.setFreeFont(FSSB9);
+  String serverString = String("Server ") + mySSID;
+  tft.drawString(serverString, 15, 10);
 }
 
 // Displays start screen
