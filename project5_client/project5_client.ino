@@ -72,17 +72,17 @@ BLEAddress THServer(bd_addr);
 // callback routine for new temperature data from server from notiifcaiton.
 static void notifyTempCallback(
   BLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify) {
-    char buffer[4];
-    sprintf(buffer, "%d", (uint16_t) (*pData));  
-    displayTemperatureValue((uint16_t)(*pData));
+
+    uint16_t tempValue = (uint16_t)pData[0] | ((uint16_t)pData[1] << 8);
+    displayTemperatureValue(tempValue);
   }
 
 // callback routine for new humidity data from server from notiifcaiton.
 static void notifyHumidityCallback(
   BLERemoteCharacteristic* pBLERemoteCharacteristic, uint8_t* pData, size_t length, bool isNotify) {
-    char buffer[4];
-    sprintf(buffer, "%d", (uint16_t) (*pData));  
-    displayHumidityValue((uint16_t)(*pData));
+
+    uint16_t humValue = (uint16_t)pData[0] | ((uint16_t)pData[1] << 8);
+    displayHumidityValue(humValue);
   }
 
 
@@ -157,7 +157,7 @@ void setup() {
   displaySplashScreen();
   delay(2000);
   drawGridLayout();
-  displayTopReading(CLIENT_DEVICE_NAME);
+  displayTopReading(SERVER_DEVICE_NAME);
 
   clientState = STATE_INIT;
   statusMessage("Initializing", TFT_BLACK);
@@ -263,8 +263,8 @@ void drawGridLayout() {
   tft.drawString("Temperature", 80, 65);
   tft.drawString("Humidity", 240, 65);
 
-  tft.drawString("Celsius (C)", 80, 150);
-  tft.drawString("Percent (%)", 240, 150);
+  tft.drawString("Celsius", 80, 150);
+  tft.drawString("Percent", 240, 150);
 }
 
 // displays server name
@@ -277,8 +277,8 @@ void displayTopReading(const char* message) {
 
 // displays temperature value
 void displayTemperatureValue(uint16_t value) {
-  char buffer[8];
-  snprintf(buffer, sizeof(buffer), "%u", (unsigned int)value);
+  char buffer[10];
+  snprintf(buffer, sizeof(buffer), "%u.%02u", (unsigned int)(value/100), (unsigned int)(value % 100));
   tft.fillRect(5, 80, 150, 50, TFT_BLUE);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_WHITE);
@@ -288,8 +288,8 @@ void displayTemperatureValue(uint16_t value) {
 
 // displays humidity value
 void displayHumidityValue(uint16_t value) {
-  char buffer[8];
-  snprintf(buffer, sizeof(buffer), "%u", (unsigned int)value);
+  char buffer[10];
+  snprintf(buffer, sizeof(buffer), "%u.%02u", (unsigned int)(value/100), (unsigned int)(value % 100));
   tft.fillRect(165, 80, 150, 50, TFT_BLUE);
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_WHITE);
@@ -386,7 +386,7 @@ bool connectToServer() {
 
     #ifdef DEBUG
     Serial.print("STATUS: Temperature is ");
-    Serial.print(tempBuffer);
+    Serial.print(tempValue / 100.0f, 2);
     Serial.println(" C");
     #endif
   }
@@ -409,7 +409,7 @@ bool connectToServer() {
 
     #ifdef DEBUG
     Serial.print("STATUS: Humidity is ");
-    Serial.print(humidityValue);
+    Serial.print(humidityValue / 100.0f, 2);
     Serial.println(" %");
     #endif
   }

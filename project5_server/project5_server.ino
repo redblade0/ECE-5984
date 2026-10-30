@@ -220,11 +220,11 @@ void loop() {
 
     readSensor();
 
-    uint16_t tempValue = (uint16_t) round(lastTemp);
+    uint16_t tempValue = (uint16_t) round(lastTemp * 100.0);
     pTempCharacteristic->setValue(tempValue);
     pTempCharacteristic->notify(true);
 
-    uint16_t humValue = (uint16_t) round(lastHumidity);
+    uint16_t humValue = (uint16_t) round(lastHumidity * 100.0);
     pHumidityCharacteristic->setValue(humValue);
     pHumidityCharacteristic->notify(true);
 
